@@ -166,6 +166,7 @@ export function App() {
       await rtcManagerRef.current.sendFile(selectedFile);
     } catch (err: any) {
       console.error('Send error:', err);
+      hasAutoStartedRef.current = false;
       setErrorMsg(err.message || 'File send failed');
     }
   };

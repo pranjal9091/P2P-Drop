@@ -175,8 +175,29 @@ export class WebRTCManager {
   // --- Sender File Transfer Engine with Backpressure ---
 
   public async sendFile(file: File): Promise<void> {
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      throw new Error('Data channel is not open');
+    if (!this.dataChannel) {
+      throw new Error('Data channel is not initialized');
+    }
+
+    if (this.dataChannel.readyState !== 'open') {
+      console.log('[WebRTCManager] DataChannel state is', this.dataChannel.readyState, '. Waiting for channel to open...');
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Data channel failed to open within 10s')), 10000);
+        
+        if (this.dataChannel?.readyState === 'open') {
+          clearTimeout(timeout);
+          return resolve();
+        }
+
+        const existingOnOpen = this.dataChannel?.onopen;
+        if (this.dataChannel) {
+          this.dataChannel.onopen = (ev) => {
+            clearTimeout(timeout);
+            if (existingOnOpen) existingOnOpen.call(this.dataChannel, ev);
+            resolve();
+          };
+        }
+      });
     }
 
     console.log(`[WebRTCManager] Preparing file transfer: ${file.name} (${file.size} bytes)`);
