@@ -136,13 +136,15 @@ export function App() {
 
         case 'PEER_DISCONNECTED':
           setPeerJoined(false);
-          setConnectionState('disconnected');
-          setReceivedFile((currentFile) => {
-            if (!currentFile) {
-              setErrorMsg('Peer disconnected from signaling channel');
-            }
-            return currentFile;
-          });
+          if (!rtcManagerRef.current?.isDataChannelOpen()) {
+            setConnectionState('disconnected');
+            setReceivedFile((currentFile) => {
+              if (!currentFile) {
+                setErrorMsg('Peer disconnected from signaling channel');
+              }
+              return currentFile;
+            });
+          }
           break;
 
         case 'ERROR':
