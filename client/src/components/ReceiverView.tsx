@@ -118,7 +118,7 @@ export const ReceiverView: React.FC<Props> = ({
             </span>
           </div>
 
-          {error && (
+          {error && !receivedFile && (
             <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-lg flex items-center space-x-3 text-rose-300 text-xs">
               <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
               <span>{error}</span>
