@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { TransferProgress } from '../types/webrtc';
-import { Copy, Check, QrCode, ArrowRight, RefreshCw, Zap, Radio, FileText } from 'lucide-react';
+import { Copy, Check, QrCode, ArrowRight, RefreshCw, Zap, Radio, FileText, XCircle } from 'lucide-react';
 import QRCode from 'qrcode';
 
 interface Props {
@@ -13,6 +13,7 @@ interface Props {
   connectionState: string;
   progress: TransferProgress | null;
   onStartSend: () => void;
+  onCancelTransfer?: () => void;
   onReset: () => void;
 }
 
@@ -26,6 +27,7 @@ export const SenderView: React.FC<Props> = ({
   connectionState,
   progress,
   onStartSend,
+  onCancelTransfer,
   onReset
 }) => {
   const [copied, setCopied] = useState(false);
@@ -291,6 +293,16 @@ export const SenderView: React.FC<Props> = ({
                   </span>
                 </div>
               </div>
+
+              {onCancelTransfer && (progress.status === 'transferring' || progress.status === 'hashing') && (
+                <button
+                  onClick={onCancelTransfer}
+                  className="w-full py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-mono font-bold text-xs rounded border border-rose-500/30 flex items-center justify-center space-x-1.5 transition-colors mt-2"
+                >
+                  <XCircle className="w-4 h-4" />
+                  <span>CANCEL STREAM</span>
+                </button>
+              )}
             </div>
           )}
         </div>

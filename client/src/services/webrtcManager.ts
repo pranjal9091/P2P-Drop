@@ -7,6 +7,7 @@ export interface WebRTCEvents {
   onFileReceived?: (file: { blob: Blob; metadata: FileMetadata; checksumVerified: boolean }) => void;
   onDiagnosticsUpdate?: (stats: IceDiagnosticStats) => void;
   onSendComplete?: (metadata: FileMetadata) => void;
+  onCancel?: (reason: string) => void;
   onError?: (error: string) => void;
 }
 
@@ -15,6 +16,7 @@ export class WebRTCManager {
   private dataChannel: RTCDataChannel | null = null;
   private pendingIceCandidates: RTCIceCandidateInit[] = [];
   private remoteDescriptionSet = false;
+  private isCancelled = false;
 
   private events: WebRTCEvents;
   private statsInterval: number | null = null;
@@ -244,7 +246,14 @@ export class WebRTCManager {
     let lastSpeedTime = startTime;
     let lastSpeedBytes = 0;
 
+    this.isCancelled = false;
+
     for (let offset = 0; offset < file.size; offset += this.CHUNK_SIZE) {
+      if (this.isCancelled) {
+        console.log('[WebRTCManager] Transfer loop stopped due to cancellation');
+        return;
+      }
+
       const slice = file.slice(offset, offset + this.CHUNK_SIZE);
       const buffer = await slice.arrayBuffer();
 
@@ -252,6 +261,8 @@ export class WebRTCManager {
       if (this.dataChannel.bufferedAmount > this.BUFFER_HIGH_WATERMARK) {
         await this.waitForBufferLow();
       }
+
+      if (this.isCancelled) return;
 
       this.dataChannel.send(buffer);
       bytesSent += buffer.byteLength;
@@ -350,12 +361,15 @@ export class WebRTCManager {
           }
         } else if (msg.type === 'FOOTER') {
           await this.finishFileReassembly();
+        } else if (msg.type === 'CANCEL') {
+          console.log('[WebRTCManager] Remote peer sent CANCEL command');
+          this.cancelTransfer(false);
         }
       } catch (e) {
         console.error('[WebRTCManager] Failed to parse control message:', e);
       }
     } else if (data instanceof ArrayBuffer) {
-      if (!this.incomingMetadata) return;
+      if (this.isCancelled || !this.incomingMetadata) return;
 
       this.incomingChunks.push(data);
       this.receivedBytes += data.byteLength;
@@ -504,6 +518,40 @@ export class WebRTCManager {
 
   public isDataChannelOpen(): boolean {
     return this.dataChannel?.readyState === 'open';
+  }
+
+  public cancelTransfer(isLocalInitiated = true) {
+    this.isCancelled = true;
+
+    if (isLocalInitiated && this.dataChannel && this.dataChannel.readyState === 'open') {
+      try {
+        this.dataChannel.send(JSON.stringify({ type: 'CANCEL' }));
+      } catch (err) {
+        console.error('[WebRTCManager] Failed to send CANCEL packet over DataChannel:', err);
+      }
+    }
+
+    this.incomingChunks = [];
+    this.incomingMetadata = null;
+
+    if (this.events.onProgressUpdate) {
+      this.events.onProgressUpdate({
+        fileId: 'cancelled',
+        fileName: '',
+        fileSize: 0,
+        bytesTransferred: 0,
+        chunksTransferred: 0,
+        totalChunks: 0,
+        speedBps: 0,
+        percentage: 0,
+        status: 'cancelled',
+        errorMessage: isLocalInitiated ? 'Transfer cancelled by you' : 'Transfer cancelled by remote peer'
+      });
+    }
+
+    if (this.events.onCancel) {
+      this.events.onCancel(isLocalInitiated ? 'Transfer cancelled by you' : 'Transfer cancelled by remote peer');
+    }
   }
 
   public close() {

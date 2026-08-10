@@ -74,6 +74,9 @@ export function App() {
       onDiagnosticsUpdate: (stats) => {
         setDiagnostics(stats);
       },
+      onCancel: (reason) => {
+        setErrorMsg(reason);
+      },
       onError: (err) => {
         setErrorMsg(err);
       }
@@ -208,6 +211,12 @@ export function App() {
     }
   };
 
+  const handleCancelTransfer = () => {
+    if (rtcManagerRef.current) {
+      rtcManagerRef.current.cancelTransfer(true);
+    }
+  };
+
   const handleReset = () => {
     if (rtcManagerRef.current) {
       rtcManagerRef.current.close();
@@ -311,6 +320,7 @@ export function App() {
               connectionState={connectionState}
               progress={role === 'sender' ? progress : null}
               onStartSend={handleStartSend}
+              onCancelTransfer={handleCancelTransfer}
               onReset={handleReset}
             />
           </div>
@@ -324,6 +334,7 @@ export function App() {
               progress={role === 'receiver' ? progress : null}
               receivedFile={receivedFile}
               error={errorMsg}
+              onCancelTransfer={handleCancelTransfer}
             />
           </div>
         </div>

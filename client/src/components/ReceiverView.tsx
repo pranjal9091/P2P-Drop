@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { TransferProgress, FileMetadata } from '../types/webrtc';
-import { Download, ShieldCheck, ArrowRight, Radio, AlertTriangle } from 'lucide-react';
+import { Download, ShieldCheck, ArrowRight, Radio, AlertTriangle, XCircle } from 'lucide-react';
 
 interface Props {
   roomId: string;
@@ -9,6 +9,7 @@ interface Props {
   progress: TransferProgress | null;
   receivedFile: { blob: Blob; metadata: FileMetadata; checksumVerified: boolean } | null;
   error: string | null;
+  onCancelTransfer?: () => void;
 }
 
 export const ReceiverView: React.FC<Props> = ({
@@ -17,7 +18,8 @@ export const ReceiverView: React.FC<Props> = ({
   connectionState,
   progress,
   receivedFile,
-  error
+  error,
+  onCancelTransfer
 }) => {
   const [inputCode, setInputCode] = useState(roomId || '');
 
@@ -161,6 +163,16 @@ export const ReceiverView: React.FC<Props> = ({
                   </span>
                 </div>
               </div>
+
+              {onCancelTransfer && (progress.status === 'transferring' || progress.status === 'assembling') && (
+                <button
+                  onClick={onCancelTransfer}
+                  className="w-full py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-mono font-bold text-xs rounded border border-rose-500/30 flex items-center justify-center space-x-1.5 transition-colors mt-2"
+                >
+                  <XCircle className="w-4 h-4" />
+                  <span>CANCEL INBOUND STREAM</span>
+                </button>
+              )}
             </div>
           )}
 

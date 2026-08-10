@@ -27,7 +27,7 @@ export interface TransferProgress {
   speedBps: number; // Bytes per second
   percentage: number;
   checksumVerified?: boolean;
-  status: 'hashing' | 'transferring' | 'assembling' | 'completed' | 'error';
+  status: 'hashing' | 'transferring' | 'assembling' | 'completed' | 'cancelled' | 'error';
   errorMessage?: string;
 }
 
