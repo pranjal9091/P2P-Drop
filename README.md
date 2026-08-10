@@ -14,12 +14,12 @@ Zero-server browser-to-browser file sharing powered by native WebRTC DataChannel
 ## Demo
 
 ### Screenshots
-<!-- SCREENSHOT_1: main transfer UI -->
+<img width="2940" height="1912" alt="Image" src="https://github.com/user-attachments/assets/89a6b16e-32b9-41d4-a529-ea1143215e48" />
 
-<!-- SCREENSHOT_2: connection/pairing flow -->
+<img width="2940" height="1912" alt="Image" src="https://github.com/user-attachments/assets/542313bc-d836-4edf-8d28-c580e2917a5f" />
 
 ### Video Walkthrough
-<!-- DEMO_VIDEO: short screen recording showing a full transfer between two browsers -->
+https://github.com/user-attachments/assets/b8a63046-4dad-4f4a-8cf7-9ec1867bca63
 
 ---
 
