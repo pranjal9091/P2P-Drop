@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-mono: 'Space Mono', monospace;
+    --font-sans: 'Inter', sans-serif;
+  }
+
+  body {
+    background-color: #16151A;
+    color: #EDEAE3;
+    font-family: var(--font-sans);
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4, h5, h6, .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+/* Tabular figures so speed, percentage, ETA numbers never jitter */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Crosshair corners for load zone on drag-over */
+.crosshair-container {
+  position: relative;
+}
+
+.crosshair-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  transition: all 0.2s ease;
+}
+
+.crosshair-top-left {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid #E8A33D;
+  border-left: 2px solid #E8A33D;
+}
+
+.crosshair-top-right {
+  top: -1px;
+  right: -1px;
+  border-top: 2px solid #E8A33D;
+  border-right: 2px solid #E8A33D;
+}
+
+.crosshair-bottom-left {
+  bottom: -1px;
+  left: -1px;
+  border-bottom: 2px solid #E8A33D;
+  border-left: 2px solid #E8A33D;
+}
+
+.crosshair-bottom-right {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid #E8A33D;
+  border-right: 2px solid #E8A33D;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #16151A;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2A2932;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #E8A33D;
+}
