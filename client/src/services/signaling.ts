@@ -9,13 +9,31 @@ export class SignalingClient {
   private pingInterval: number | null = null;
 
   constructor(url?: string) {
+    if (url) {
+      this.url = url;
+      return;
+    }
+
+    // 1. Environment Variable check (Vite convention: VITE_SIGNALING_URL)
+    const envUrl = import.meta.env.VITE_SIGNALING_URL;
+    if (envUrl) {
+      this.url = envUrl;
+      return;
+    }
+
+    // 2. Protocol detection (wss: for https pages, ws: for http/localhost)
+    const isHttps = window.location.protocol === 'https:';
+    const wsProtocol = isHttps ? 'wss:' : 'ws:';
     const host = window.location.hostname || 'localhost';
-    this.url = url || `ws://${host}:8080`;
+    const port = isHttps ? '' : ':8080';
+    
+    this.url = `${wsProtocol}//${host}${port}`;
   }
 
   public connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
+        console.log('[SignalingClient] Connecting to:', this.url);
         this.ws = new WebSocket(this.url);
 
         this.ws.onopen = () => {
