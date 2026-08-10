@@ -181,22 +181,21 @@ export class WebRTCManager {
 
     if (this.dataChannel.readyState !== 'open') {
       console.log('[WebRTCManager] DataChannel state is', this.dataChannel.readyState, '. Waiting for channel to open...');
+      const channel = this.dataChannel;
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('Data channel failed to open within 10s')), 10000);
         
-        if (this.dataChannel?.readyState === 'open') {
+        if (channel.readyState === 'open') {
           clearTimeout(timeout);
           return resolve();
         }
 
-        const existingOnOpen = this.dataChannel?.onopen;
-        if (this.dataChannel) {
-          this.dataChannel.onopen = (ev) => {
-            clearTimeout(timeout);
-            if (existingOnOpen) existingOnOpen.call(this.dataChannel, ev);
-            resolve();
-          };
-        }
+        const existingOnOpen = channel.onopen;
+        channel.onopen = (ev) => {
+          clearTimeout(timeout);
+          if (existingOnOpen) existingOnOpen.call(channel, ev);
+          resolve();
+        };
       });
     }
 
