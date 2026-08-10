@@ -8,6 +8,7 @@ interface Props {
   onFileSelect: (file: File) => void;
   roomId: string | null;
   onCreateRoom: () => void;
+  isGeneratingRoom?: boolean;
   peerJoined: boolean;
   connectionState: string;
   progress: TransferProgress | null;
@@ -20,6 +21,7 @@ export const SenderView: React.FC<Props> = ({
   onFileSelect,
   roomId,
   onCreateRoom,
+  isGeneratingRoom,
   peerJoined,
   connectionState,
   progress,
@@ -166,12 +168,22 @@ export const SenderView: React.FC<Props> = ({
           {/* Stage 2: Initialize Frequency */}
           {!roomId ? (
             <button
+              disabled={isGeneratingRoom}
               onClick={onCreateRoom}
-              className="w-full py-3.5 bg-[#E8A33D] hover:bg-[#d49232] text-[#16151A] font-mono font-bold text-xs rounded-lg shadow-lg flex items-center justify-center space-x-2 transition-all uppercase tracking-wider"
+              className="w-full py-3.5 bg-[#E8A33D] hover:bg-[#d49232] text-[#16151A] font-mono font-bold text-xs rounded-lg shadow-lg flex items-center justify-center space-x-2 transition-all uppercase tracking-wider disabled:opacity-75 cursor-pointer disabled:cursor-wait"
             >
-              <Zap className="w-4 h-4" />
-              <span>GENERATE TRANSMISSION FREQUENCY</span>
-              <ArrowRight className="w-4 h-4" />
+              {isGeneratingRoom ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>CONNECTING & GENERATING FREQUENCY...</span>
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4" />
+                  <span>GENERATE TRANSMISSION FREQUENCY</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           ) : (
             <div className="space-y-4">

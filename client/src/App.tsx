@@ -97,6 +97,7 @@ export function App() {
       switch (msg.type) {
         case 'ROOM_CREATED':
           setRoomId(msg.roomId);
+          setIsGeneratingRoom(false);
           break;
 
         case 'ROOM_JOINED':
@@ -149,14 +150,19 @@ export function App() {
     return client;
   };
 
+  const [isGeneratingRoom, setIsGeneratingRoom] = useState(false);
+
   const handleCreateRoom = async () => {
     try {
+      setErrorMsg(null);
+      setIsGeneratingRoom(true);
       updateRole('sender');
       const sig = await getSignalingClient();
       sig.createRoom();
     } catch (err) {
       console.error('Failed to create room:', err);
-      setErrorMsg('Failed to connect to signaling server at ws://localhost:8080');
+      setErrorMsg('Failed to connect to signaling server');
+      setIsGeneratingRoom(false);
     }
   };
 
@@ -293,6 +299,7 @@ export function App() {
               }}
               roomId={roomId}
               onCreateRoom={handleCreateRoom}
+              isGeneratingRoom={isGeneratingRoom}
               peerJoined={peerJoined}
               connectionState={connectionState}
               progress={role === 'sender' ? progress : null}
