@@ -31,10 +31,11 @@ export class WebRTCManager {
   private currentSpeedBps = 0;
   private lastReceiverProgressTime = 0;
 
-  // Optimized configuration thresholds for high throughput
-  private readonly CHUNK_SIZE = 64 * 1024; // 64 KB chunks for optimal SCTP framing
-  private readonly BUFFER_HIGH_WATERMARK = 4 * 1024 * 1024; // 4 MB pipeline buffer
-  private readonly BUFFER_LOW_WATERMARK = 512 * 1024; // 512 KB resume threshold
+  // High-performance streaming constants
+  private readonly CHUNK_SIZE = 64 * 1024; // 64 KB SCTP packet size
+  private readonly BLOCK_SIZE = 2 * 1024 * 1024; // 2 MB disk pre-fetch block to eliminate async microtask delays
+  private readonly BUFFER_HIGH_WATERMARK = 8 * 1024 * 1024; // 8 MB pipeline buffer limit
+  private readonly BUFFER_LOW_WATERMARK = 1024 * 1024; // 1 MB buffer resume threshold
 
   constructor(events: WebRTCEvents) {
     this.events = events;
@@ -178,7 +179,7 @@ export class WebRTCManager {
     this.pendingIceCandidates = [];
   }
 
-  // --- High-Speed Sender File Transfer Engine ---
+  // --- Ultra-Fast Sender Engine with Block Pre-Fetching ---
 
   public async sendFile(file: File): Promise<void> {
     if (!this.dataChannel) {
@@ -202,7 +203,7 @@ export class WebRTCManager {
       });
     }
 
-    console.log(`[WebRTCManager] High-speed streaming starting for: ${file.name} (${file.size} bytes)`);
+    console.log(`[WebRTCManager] Block-pipelined fast stream starting for: ${file.name} (${file.size} bytes)`);
 
     // Step 1: Pre-transfer Hashing
     if (this.events.onProgressUpdate) {
@@ -219,7 +220,7 @@ export class WebRTCManager {
       });
     }
 
-    // Fast SHA-256 computation for files <= 50 MB
+    // Compute hash for files <= 50 MB
     let sha256 = 'p2p-sctp-checksum-verified';
     if (file.size <= 50 * 1024 * 1024) {
       sha256 = await calculateSHA256(file);
@@ -239,7 +240,7 @@ export class WebRTCManager {
     // Step 2: Send Header Packet
     this.dataChannel.send(JSON.stringify({ type: 'HEADER', metadata }));
 
-    // Step 3: Fast Streaming Loop with Throttled UI Updates
+    // Step 3: Block Pre-Fetching Streaming Loop (2 MB Blocks -> 64 KB Synchronous Sub-Chunks)
     let bytesSent = 0;
     let chunksSent = 0;
     const startTime = Date.now();
@@ -249,50 +250,58 @@ export class WebRTCManager {
 
     this.isCancelled = false;
 
-    for (let offset = 0; offset < file.size; offset += this.CHUNK_SIZE) {
+    for (let blockOffset = 0; blockOffset < file.size; blockOffset += this.BLOCK_SIZE) {
       if (this.isCancelled) {
         console.log('[WebRTCManager] Transfer loop cancelled');
         return;
       }
 
-      const slice = file.slice(offset, offset + this.CHUNK_SIZE);
-      const buffer = await slice.arrayBuffer();
+      // Read 2 MB Block into ArrayBuffer ONCE to eliminate per-chunk async disk I/O microtask latency
+      const blockSlice = file.slice(blockOffset, Math.min(file.size, blockOffset + this.BLOCK_SIZE));
+      const blockBuffer = await blockSlice.arrayBuffer();
 
-      // Check Backpressure - pause only when buffer reaches 4 MB watermark
-      if (this.dataChannel.bufferedAmount > this.BUFFER_HIGH_WATERMARK) {
-        await this.waitForBufferLow();
-      }
+      // Synchronously slice and send 64 KB sub-chunks from the 2 MB memory buffer
+      for (let subOffset = 0; subOffset < blockBuffer.byteLength; subOffset += this.CHUNK_SIZE) {
+        if (this.isCancelled) return;
 
-      if (this.isCancelled) return;
+        // Check Backpressure - pause only if buffered amount exceeds 8 MB pipeline limit
+        if (this.dataChannel.bufferedAmount > this.BUFFER_HIGH_WATERMARK) {
+          await this.waitForBufferLow();
+        }
 
-      this.dataChannel.send(buffer);
-      bytesSent += buffer.byteLength;
-      chunksSent++;
+        if (this.isCancelled) return;
 
-      const now = Date.now();
-      const timeDiff = (now - lastSpeedTime) / 1000;
-      let speedBps = 0;
-      if (timeDiff >= 0.2) {
-        speedBps = Math.round((bytesSent - lastSpeedBytes) / timeDiff);
-        lastSpeedTime = now;
-        lastSpeedBytes = bytesSent;
-      }
+        const chunkBuffer = blockBuffer.slice(subOffset, Math.min(blockBuffer.byteLength, subOffset + this.CHUNK_SIZE));
+        this.dataChannel.send(chunkBuffer);
+        
+        bytesSent += chunkBuffer.byteLength;
+        chunksSent++;
 
-      // THROTTLE UI PROGRESS UPDATES TO ONCE EVERY 80ms (Prevents React Re-render Throttling)
-      if (now - lastSenderProgressTime > 80 || bytesSent === file.size) {
-        lastSenderProgressTime = now;
-        if (this.events.onProgressUpdate) {
-          this.events.onProgressUpdate({
-            fileId: metadata.id,
-            fileName: file.name,
-            fileSize: file.size,
-            bytesTransferred: bytesSent,
-            chunksTransferred: chunksSent,
-            totalChunks,
-            speedBps,
-            percentage: Math.round((bytesSent / file.size) * 100),
-            status: 'transferring'
-          });
+        const now = Date.now();
+        const timeDiff = (now - lastSpeedTime) / 1000;
+        let speedBps = 0;
+        if (timeDiff >= 0.15) {
+          speedBps = Math.round((bytesSent - lastSpeedBytes) / timeDiff);
+          lastSpeedTime = now;
+          lastSpeedBytes = bytesSent;
+        }
+
+        // Throttle UI Updates to once every 60ms to keep JS thread focused on streaming
+        if (now - lastSenderProgressTime > 60 || bytesSent === file.size) {
+          lastSenderProgressTime = now;
+          if (this.events.onProgressUpdate) {
+            this.events.onProgressUpdate({
+              fileId: metadata.id,
+              fileName: file.name,
+              fileSize: file.size,
+              bytesTransferred: bytesSent,
+              chunksTransferred: chunksSent,
+              totalChunks,
+              speedBps,
+              percentage: Math.round((bytesSent / file.size) * 100),
+              status: 'transferring'
+            });
+          }
         }
       }
     }
@@ -319,12 +328,15 @@ export class WebRTCManager {
       this.events.onSendComplete(metadata);
     }
 
-    console.log('[WebRTCManager] File stream complete');
+    console.log('[WebRTCManager] Block-pipelined stream complete');
   }
 
   private waitForBufferLow(): Promise<void> {
     return new Promise((resolve) => {
       if (!this.dataChannel) return resolve();
+      if (this.dataChannel.bufferedAmount <= this.BUFFER_LOW_WATERMARK) {
+        return resolve();
+      }
       const onLow = () => {
         if (this.dataChannel) {
           this.dataChannel.onbufferedamountlow = null;
@@ -381,14 +393,14 @@ export class WebRTCManager {
 
       const now = Date.now();
       const timeDiff = (now - this.lastSpeedCheckTime) / 1000;
-      if (timeDiff >= 0.2) {
+      if (timeDiff >= 0.15) {
         this.currentSpeedBps = Math.round((this.receivedBytes - this.lastSpeedCheckBytes) / timeDiff);
         this.lastSpeedCheckTime = now;
         this.lastSpeedCheckBytes = this.receivedBytes;
       }
 
-      // THROTTLE RECEIVER REACT UI UPDATES TO ONCE EVERY 80ms
-      if (now - this.lastReceiverProgressTime > 80 || this.receivedBytes === this.incomingMetadata.size) {
+      // Throttle Receiver UI Updates to once every 60ms
+      if (now - this.lastReceiverProgressTime > 60 || this.receivedBytes === this.incomingMetadata.size) {
         this.lastReceiverProgressTime = now;
         if (this.events.onProgressUpdate) {
           this.events.onProgressUpdate({
