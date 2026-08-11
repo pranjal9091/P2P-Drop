@@ -30,7 +30,20 @@ export class SignalingClient {
     this.url = `${wsProtocol}//${host}${port}`;
   }
 
-  public connect(): Promise<void> {
+  public async connect(retries = 3, delayMs = 1500): Promise<void> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        await this.attemptConnect();
+        return;
+      } catch (err) {
+        console.warn(`[SignalingClient] Connection attempt ${attempt}/${retries} failed.`);
+        if (attempt === retries) throw err;
+        await new Promise((res) => setTimeout(res, delayMs));
+      }
+    }
+  }
+
+  private attemptConnect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
         console.log('[SignalingClient] Connecting to:', this.url);
@@ -106,7 +119,7 @@ export class SignalingClient {
   private startHeartbeat() {
     this.pingInterval = window.setInterval(() => {
       this.send({ type: 'PING' });
-    }, 25000);
+    }, 15000); // 15s ping interval to prevent cloud WebSocket timeouts
   }
 
   private stopHeartbeat() {
