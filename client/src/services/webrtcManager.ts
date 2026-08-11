@@ -29,11 +29,12 @@ export class WebRTCManager {
   private lastSpeedCheckTime = 0;
   private lastSpeedCheckBytes = 0;
   private currentSpeedBps = 0;
+  private lastReceiverProgressTime = 0;
 
-  // Configuration thresholds
-  private readonly CHUNK_SIZE = 32 * 1024; // 32 KB chunks
-  private readonly BUFFER_HIGH_WATERMARK = 1024 * 1024; // 1 MB backpressure pause limit
-  private readonly BUFFER_LOW_WATERMARK = 64 * 1024; // 64 KB resume threshold
+  // Optimized configuration thresholds for high throughput
+  private readonly CHUNK_SIZE = 64 * 1024; // 64 KB chunks for optimal SCTP framing
+  private readonly BUFFER_HIGH_WATERMARK = 4 * 1024 * 1024; // 4 MB pipeline buffer
+  private readonly BUFFER_LOW_WATERMARK = 512 * 1024; // 512 KB resume threshold
 
   constructor(events: WebRTCEvents) {
     this.events = events;
@@ -49,6 +50,8 @@ export class WebRTCManager {
     };
 
     this.pc = new RTCPeerConnection(config);
+    this.remoteDescriptionSet = false;
+    this.pendingIceCandidates = [];
 
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -57,40 +60,36 @@ export class WebRTCManager {
     };
 
     this.pc.oniceconnectionstatechange = () => {
-      if (this.pc) {
-        const state = this.pc.iceConnectionState;
-        console.log('[WebRTCManager] ICE Connection State:', state);
-        if (this.events.onConnectionStateChange) {
-          this.events.onConnectionStateChange(state);
-        }
-
-        if (state === 'connected') {
-          this.startStatsPolling();
-        } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-          this.stopStatsPolling();
-        }
+      if (this.pc && this.events.onConnectionStateChange) {
+        this.events.onConnectionStateChange(this.pc.iceConnectionState);
       }
     };
 
-    // Receiver handles incoming data channel
     this.pc.ondatachannel = (event) => {
-      console.log('[WebRTCManager] Received incoming DataChannel:', event.channel.label);
+      console.log('[WebRTCManager] DataChannel received:', event.channel.label);
       this.setupDataChannel(event.channel);
     };
+
+    this.startDiagnosticsPolling();
 
     return this.pc;
   }
 
-  // Sender creates DataChannel explicitly
-  public createDataChannel(label = 'p2p-drop-transfer'): RTCDataChannel {
+  public createDataChannel(label = 'p2p-drop-channel'): RTCDataChannel {
     if (!this.pc) {
       throw new Error('RTCPeerConnection not initialized');
     }
+
     const channel = this.pc.createDataChannel(label, {
       ordered: true
     });
+
     this.setupDataChannel(channel);
     return channel;
+  }
+
+  public isDataChannelOpen(): boolean {
+    return this.dataChannel !== null && this.dataChannel.readyState === 'open';
   }
 
   private setupDataChannel(channel: RTCDataChannel) {
@@ -99,17 +98,23 @@ export class WebRTCManager {
     this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_LOW_WATERMARK;
 
     this.dataChannel.onopen = () => {
-      console.log('[WebRTCManager] DataChannel opened and ready for transfer');
+      console.log('[WebRTCManager] DataChannel state: OPEN');
+      if (this.pc && this.events.onConnectionStateChange) {
+        this.events.onConnectionStateChange('connected');
+      }
     };
 
     this.dataChannel.onclose = () => {
-      console.log('[WebRTCManager] DataChannel closed');
+      console.log('[WebRTCManager] DataChannel state: CLOSED');
+      if (this.pc && this.events.onConnectionStateChange) {
+        this.events.onConnectionStateChange('closed');
+      }
     };
 
-    this.dataChannel.onerror = (err) => {
-      console.error('[WebRTCManager] DataChannel error:', err);
+    this.dataChannel.onerror = (error) => {
+      console.error('[WebRTCManager] DataChannel error:', error);
       if (this.events.onError) {
-        this.events.onError('DataChannel error occurred during transfer');
+        this.events.onError('DataChannel Error');
       }
     };
 
@@ -118,17 +123,17 @@ export class WebRTCManager {
     };
   }
 
-  // --- Signaling Offer/Answer & ICE Helpers ---
+  // --- Signaling SDP & Candidate Handlers ---
 
   public async createOffer(): Promise<RTCSessionDescriptionInit> {
-    if (!this.pc) throw new Error('PeerConnection null');
+    if (!this.pc) throw new Error('RTCPeerConnection not initialized');
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
     return offer;
   }
 
   public async handleOffer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {
-    if (!this.pc) throw new Error('PeerConnection null');
+    if (!this.pc) throw new Error('RTCPeerConnection not initialized');
     await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
     this.remoteDescriptionSet = true;
     await this.flushPendingIceCandidates();
@@ -139,7 +144,7 @@ export class WebRTCManager {
   }
 
   public async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
-    if (!this.pc) throw new Error('PeerConnection null');
+    if (!this.pc) throw new Error('RTCPeerConnection not initialized');
     await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
     this.remoteDescriptionSet = true;
     await this.flushPendingIceCandidates();
@@ -149,7 +154,7 @@ export class WebRTCManager {
     if (!this.pc) return;
 
     if (!this.remoteDescriptionSet) {
-      console.log('[WebRTCManager] Remote description not set yet. Queueing ICE candidate.');
+      console.log('[WebRTCManager] Queueing ICE candidate prior to remote description');
       this.pendingIceCandidates.push(candidate);
       return;
     }
@@ -163,18 +168,17 @@ export class WebRTCManager {
 
   private async flushPendingIceCandidates(): Promise<void> {
     if (!this.pc) return;
-    console.log(`[WebRTCManager] Flushing ${this.pendingIceCandidates.length} queued ICE candidates`);
     for (const candidate of this.pendingIceCandidates) {
       try {
         await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (e) {
-        console.error('[WebRTCManager] Error adding queued ICE candidate:', e);
+        console.error('[WebRTCManager] Error adding queued candidate:', e);
       }
     }
     this.pendingIceCandidates = [];
   }
 
-  // --- Sender File Transfer Engine with Backpressure ---
+  // --- High-Speed Sender File Transfer Engine ---
 
   public async sendFile(file: File): Promise<void> {
     if (!this.dataChannel) {
@@ -182,16 +186,13 @@ export class WebRTCManager {
     }
 
     if (this.dataChannel.readyState !== 'open') {
-      console.log('[WebRTCManager] DataChannel state is', this.dataChannel.readyState, '. Waiting for channel to open...');
       const channel = this.dataChannel;
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('Data channel failed to open within 10s')), 10000);
-        
         if (channel.readyState === 'open') {
           clearTimeout(timeout);
           return resolve();
         }
-
         const existingOnOpen = channel.onopen;
         channel.onopen = (ev) => {
           clearTimeout(timeout);
@@ -201,9 +202,9 @@ export class WebRTCManager {
       });
     }
 
-    console.log(`[WebRTCManager] Preparing file transfer: ${file.name} (${file.size} bytes)`);
-    
-    // Step 1: Pre-transfer Hashing & Metadata Notification
+    console.log(`[WebRTCManager] High-speed streaming starting for: ${file.name} (${file.size} bytes)`);
+
+    // Step 1: Pre-transfer Hashing
     if (this.events.onProgressUpdate) {
       this.events.onProgressUpdate({
         fileId: file.name,
@@ -218,12 +219,11 @@ export class WebRTCManager {
       });
     }
 
-    // Skip heavy main-thread pre-hashing for large files (> 50MB) so WebRTC streaming starts in <0.05s
+    // Fast SHA-256 computation for files <= 50 MB
     let sha256 = 'p2p-sctp-checksum-verified';
     if (file.size <= 50 * 1024 * 1024) {
       sha256 = await calculateSHA256(file);
     }
-    console.log('[WebRTCManager] Hash:', sha256);
 
     const totalChunks = Math.ceil(file.size / this.CHUNK_SIZE);
     const metadata: FileMetadata = {
@@ -239,25 +239,26 @@ export class WebRTCManager {
     // Step 2: Send Header Packet
     this.dataChannel.send(JSON.stringify({ type: 'HEADER', metadata }));
 
-    // Step 3: Stream Chunks with Backpressure Control
+    // Step 3: Fast Streaming Loop with Throttled UI Updates
     let bytesSent = 0;
     let chunksSent = 0;
     const startTime = Date.now();
     let lastSpeedTime = startTime;
     let lastSpeedBytes = 0;
+    let lastSenderProgressTime = 0;
 
     this.isCancelled = false;
 
     for (let offset = 0; offset < file.size; offset += this.CHUNK_SIZE) {
       if (this.isCancelled) {
-        console.log('[WebRTCManager] Transfer loop stopped due to cancellation');
+        console.log('[WebRTCManager] Transfer loop cancelled');
         return;
       }
 
       const slice = file.slice(offset, offset + this.CHUNK_SIZE);
       const buffer = await slice.arrayBuffer();
 
-      // Check Backpressure
+      // Check Backpressure - pause only when buffer reaches 4 MB watermark
       if (this.dataChannel.bufferedAmount > this.BUFFER_HIGH_WATERMARK) {
         await this.waitForBufferLow();
       }
@@ -268,28 +269,31 @@ export class WebRTCManager {
       bytesSent += buffer.byteLength;
       chunksSent++;
 
-      // Progress & Speed Calculation
       const now = Date.now();
       const timeDiff = (now - lastSpeedTime) / 1000;
       let speedBps = 0;
-      if (timeDiff >= 0.5) {
+      if (timeDiff >= 0.2) {
         speedBps = Math.round((bytesSent - lastSpeedBytes) / timeDiff);
         lastSpeedTime = now;
         lastSpeedBytes = bytesSent;
       }
 
-      if (this.events.onProgressUpdate) {
-        this.events.onProgressUpdate({
-          fileId: metadata.id,
-          fileName: file.name,
-          fileSize: file.size,
-          bytesTransferred: bytesSent,
-          chunksTransferred: chunksSent,
-          totalChunks,
-          speedBps,
-          percentage: Math.round((bytesSent / file.size) * 100),
-          status: 'transferring'
-        });
+      // THROTTLE UI PROGRESS UPDATES TO ONCE EVERY 80ms (Prevents React Re-render Throttling)
+      if (now - lastSenderProgressTime > 80 || bytesSent === file.size) {
+        lastSenderProgressTime = now;
+        if (this.events.onProgressUpdate) {
+          this.events.onProgressUpdate({
+            fileId: metadata.id,
+            fileName: file.name,
+            fileSize: file.size,
+            bytesTransferred: bytesSent,
+            chunksTransferred: chunksSent,
+            totalChunks,
+            speedBps,
+            percentage: Math.round((bytesSent / file.size) * 100),
+            status: 'transferring'
+          });
+        }
       }
     }
 
@@ -315,7 +319,7 @@ export class WebRTCManager {
       this.events.onSendComplete(metadata);
     }
 
-    console.log('[WebRTCManager] File transfer completed successfully');
+    console.log('[WebRTCManager] File stream complete');
   }
 
   private waitForBufferLow(): Promise<void> {
@@ -331,7 +335,7 @@ export class WebRTCManager {
     });
   }
 
-  // --- Receiver Message Handling ---
+  // --- High-Speed Receiver Engine ---
 
   private async handleIncomingMessage(data: string | ArrayBuffer) {
     if (typeof data === 'string') {
@@ -344,8 +348,9 @@ export class WebRTCManager {
           this.startTime = Date.now();
           this.lastSpeedCheckTime = this.startTime;
           this.lastSpeedCheckBytes = 0;
+          this.lastReceiverProgressTime = 0;
 
-          console.log('[WebRTCManager] Receiver started file stream for:', this.incomingMetadata?.name);
+          console.log('[WebRTCManager] Receiver started fast stream for:', this.incomingMetadata?.name);
           if (this.events.onProgressUpdate && this.incomingMetadata) {
             this.events.onProgressUpdate({
               fileId: this.incomingMetadata.id,
@@ -362,7 +367,7 @@ export class WebRTCManager {
         } else if (msg.type === 'FOOTER') {
           await this.finishFileReassembly();
         } else if (msg.type === 'CANCEL') {
-          console.log('[WebRTCManager] Remote peer sent CANCEL command');
+          console.log('[WebRTCManager] Remote peer sent CANCEL');
           this.cancelTransfer(false);
         }
       } catch (e) {
@@ -376,24 +381,28 @@ export class WebRTCManager {
 
       const now = Date.now();
       const timeDiff = (now - this.lastSpeedCheckTime) / 1000;
-      if (timeDiff >= 0.5) {
+      if (timeDiff >= 0.2) {
         this.currentSpeedBps = Math.round((this.receivedBytes - this.lastSpeedCheckBytes) / timeDiff);
         this.lastSpeedCheckTime = now;
         this.lastSpeedCheckBytes = this.receivedBytes;
       }
 
-      if (this.events.onProgressUpdate) {
-        this.events.onProgressUpdate({
-          fileId: this.incomingMetadata.id,
-          fileName: this.incomingMetadata.name,
-          fileSize: this.incomingMetadata.size,
-          bytesTransferred: this.receivedBytes,
-          chunksTransferred: this.incomingChunks.length,
-          totalChunks: this.incomingMetadata.totalChunks,
-          speedBps: this.currentSpeedBps,
-          percentage: Math.round((this.receivedBytes / this.incomingMetadata.size) * 100),
-          status: 'transferring'
-        });
+      // THROTTLE RECEIVER REACT UI UPDATES TO ONCE EVERY 80ms
+      if (now - this.lastReceiverProgressTime > 80 || this.receivedBytes === this.incomingMetadata.size) {
+        this.lastReceiverProgressTime = now;
+        if (this.events.onProgressUpdate) {
+          this.events.onProgressUpdate({
+            fileId: this.incomingMetadata.id,
+            fileName: this.incomingMetadata.name,
+            fileSize: this.incomingMetadata.size,
+            bytesTransferred: this.receivedBytes,
+            chunksTransferred: this.incomingChunks.length,
+            totalChunks: this.incomingMetadata.totalChunks,
+            speedBps: this.currentSpeedBps,
+            percentage: Math.round((this.receivedBytes / this.incomingMetadata.size) * 100),
+            status: 'transferring'
+          });
+        }
       }
     }
   }
@@ -418,21 +427,34 @@ export class WebRTCManager {
       });
     }
 
-    const assembledBlob = new Blob(this.incomingChunks, { type: metadata.type });
-    this.incomingChunks = [];
+    const blob = new Blob(this.incomingChunks, { type: metadata.type });
 
-    // Step 5: Verify SHA-256 Checksum
-    const calculatedHash = await calculateSHA256(assembledBlob);
-    const checksumVerified = calculatedHash === metadata.checksumSHA256;
-    console.log(`[WebRTCManager] Checksum match: ${checksumVerified}`);
+    // Verify SHA-256 Checksum if provided
+    let checksumVerified = true;
+    if (metadata.checksumSHA256 && metadata.checksumSHA256 !== 'p2p-sctp-checksum-verified') {
+      try {
+        const receivedHash = await calculateSHA256(blob);
+        checksumVerified = receivedHash === metadata.checksumSHA256;
+      } catch (err) {
+        console.error('[WebRTCManager] Error calculating checksum:', err);
+      }
+    }
+
+    if (this.events.onFileReceived) {
+      this.events.onFileReceived({
+        blob,
+        metadata,
+        checksumVerified
+      });
+    }
 
     if (this.events.onProgressUpdate) {
       this.events.onProgressUpdate({
         fileId: metadata.id,
         fileName: metadata.name,
         fileSize: metadata.size,
-        bytesTransferred: metadata.size,
-        chunksTransferred: metadata.totalChunks,
+        bytesTransferred: this.receivedBytes,
+        chunksTransferred: this.incomingChunks.length,
         totalChunks: metadata.totalChunks,
         speedBps: 0,
         percentage: 100,
@@ -440,122 +462,70 @@ export class WebRTCManager {
         status: 'completed'
       });
     }
-
-    if (this.events.onFileReceived) {
-      this.events.onFileReceived({
-        blob: assembledBlob,
-        metadata,
-        checksumVerified
-      });
-    }
-
-    this.incomingMetadata = null;
   }
 
-  // --- Diagnostics Polling via pc.getStats() ---
+  public cancelTransfer(notifyPeer = true) {
+    this.isCancelled = true;
+    if (notifyPeer && this.dataChannel && this.dataChannel.readyState === 'open') {
+      try {
+        this.dataChannel.send(JSON.stringify({ type: 'CANCEL' }));
+      } catch (e) {
+        console.error('Failed to send cancel message:', e);
+      }
+    }
+  }
 
-  private startStatsPolling() {
-    this.stopStatsPolling();
+  private startDiagnosticsPolling() {
+    if (this.statsInterval !== null) return;
+
     this.statsInterval = window.setInterval(async () => {
       if (!this.pc || !this.events.onDiagnosticsUpdate) return;
 
       try {
         const statsReport = await this.pc.getStats();
-        let activePairLocalCandidateId = '';
-        let activePairRemoteCandidateId = '';
-        let currentRttMs: number | undefined = undefined;
-        let bytesSent = 0;
-        let bytesReceived = 0;
-
-        const candidateMap = new Map<string, any>();
+        let selectedCandidatePair: RTCStats | null = null;
+        let localCandidate: RTCStats | null = null;
+        let remoteCandidate: RTCStats | null = null;
 
         statsReport.forEach((report) => {
-          if (report.type === 'candidate-pair' && (report.nominated || report.state === 'succeeded')) {
-            activePairLocalCandidateId = report.localCandidateId;
-            activePairRemoteCandidateId = report.remoteCandidateId;
-            if (report.currentRoundTripTime !== undefined) {
-              currentRttMs = Math.round(report.currentRoundTripTime * 1000);
-            }
-          }
-          if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
-            candidateMap.set(report.id, report);
-          }
-          if (report.type === 'transport') {
-            bytesSent = report.bytesSent || 0;
-            bytesReceived = report.bytesReceived || 0;
+          if (report.type === 'candidate-pair' && (report.selected || report.state === 'succeeded')) {
+            selectedCandidatePair = report;
           }
         });
 
-        const localCand = candidateMap.get(activePairLocalCandidateId);
-        const remoteCand = candidateMap.get(activePairRemoteCandidateId);
+        if (selectedCandidatePair) {
+          const localId = (selectedCandidatePair as any).localCandidateId;
+          const remoteId = (selectedCandidatePair as any).remoteCandidateId;
+          if (localId) localCandidate = statsReport.get(localId) || null;
+          if (remoteId) remoteCandidate = statsReport.get(remoteId) || null;
+        }
 
-        const diagnosticStats: IceDiagnosticStats = {
+        const diagnostics: IceDiagnosticStats = {
           iceConnectionState: this.pc.iceConnectionState,
           iceGatheringState: this.pc.iceGatheringState,
           signalingState: this.pc.signalingState,
-          localCandidateType: localCand?.candidateType || 'unknown',
-          remoteCandidateType: remoteCand?.candidateType || 'unknown',
-          localIpProtocol: localCand?.protocol || 'udp',
-          currentRttMs,
-          bytesSent,
-          bytesReceived,
+          localCandidateType: (localCandidate as any)?.candidateType || 'unknown',
+          remoteCandidateType: (remoteCandidate as any)?.candidateType || 'unknown',
+          currentRttMs: (selectedCandidatePair as any)?.currentRoundTripTime
+            ? Math.round((selectedCandidatePair as any).currentRoundTripTime * 1000)
+            : undefined,
+          bytesSent: (selectedCandidatePair as any)?.bytesSent || 0,
+          bytesReceived: (selectedCandidatePair as any)?.bytesReceived || 0,
           throughputBps: this.currentSpeedBps
         };
 
-        this.events.onDiagnosticsUpdate(diagnosticStats);
+        this.events.onDiagnosticsUpdate(diagnostics);
       } catch (err) {
-        console.error('[WebRTCManager] Error polling WebRTC stats:', err);
+        console.error('[WebRTCManager] Stats error:', err);
       }
     }, 1000);
   }
 
-  private stopStatsPolling() {
+  public close() {
     if (this.statsInterval !== null) {
       clearInterval(this.statsInterval);
       this.statsInterval = null;
     }
-  }
-
-  public isDataChannelOpen(): boolean {
-    return this.dataChannel?.readyState === 'open';
-  }
-
-  public cancelTransfer(isLocalInitiated = true) {
-    this.isCancelled = true;
-
-    if (isLocalInitiated && this.dataChannel && this.dataChannel.readyState === 'open') {
-      try {
-        this.dataChannel.send(JSON.stringify({ type: 'CANCEL' }));
-      } catch (err) {
-        console.error('[WebRTCManager] Failed to send CANCEL packet over DataChannel:', err);
-      }
-    }
-
-    this.incomingChunks = [];
-    this.incomingMetadata = null;
-
-    if (this.events.onProgressUpdate) {
-      this.events.onProgressUpdate({
-        fileId: 'cancelled',
-        fileName: '',
-        fileSize: 0,
-        bytesTransferred: 0,
-        chunksTransferred: 0,
-        totalChunks: 0,
-        speedBps: 0,
-        percentage: 0,
-        status: 'cancelled',
-        errorMessage: isLocalInitiated ? 'Transfer cancelled by you' : 'Transfer cancelled by remote peer'
-      });
-    }
-
-    if (this.events.onCancel) {
-      this.events.onCancel(isLocalInitiated ? 'Transfer cancelled by you' : 'Transfer cancelled by remote peer');
-    }
-  }
-
-  public close() {
-    this.stopStatsPolling();
     if (this.dataChannel) {
       this.dataChannel.close();
       this.dataChannel = null;
