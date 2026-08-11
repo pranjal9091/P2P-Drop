@@ -23,6 +23,7 @@ export function App() {
   const [diagnostics, setDiagnostics] = useState<IceDiagnosticStats | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isGeneratingRoom, setIsGeneratingRoom] = useState(false);
 
   const signalingRef = useRef<SignalingClient | null>(null);
   const rtcManagerRef = useRef<WebRTCManager | null>(null);
@@ -74,9 +75,6 @@ export function App() {
       onDiagnosticsUpdate: (stats) => {
         setDiagnostics(stats);
       },
-      onCancel: (reason) => {
-        setErrorMsg(reason);
-      },
       onError: (err) => {
         setErrorMsg(err);
       }
@@ -99,15 +97,18 @@ export function App() {
 
       switch (msg.type) {
         case 'ROOM_CREATED':
+          setErrorMsg(null);
           setRoomId(msg.roomId);
           setIsGeneratingRoom(false);
           break;
 
         case 'ROOM_JOINED':
+          setErrorMsg(null);
           setRoomId(msg.roomId);
           break;
 
         case 'PEER_JOINED':
+          setErrorMsg(null);
           setPeerJoined(true);
           if (roleRef.current === 'sender' || !roleRef.current) {
             updateRole('sender');
@@ -119,6 +120,7 @@ export function App() {
           break;
 
         case 'OFFER':
+          setErrorMsg(null);
           if (roleRef.current === 'receiver' || !roleRef.current) {
             updateRole('receiver');
             rtc.initializePeerConnection((cand) => client.sendIceCandidate(cand));
@@ -128,6 +130,7 @@ export function App() {
           break;
 
         case 'ANSWER':
+          setErrorMsg(null);
           if (roleRef.current === 'sender') {
             await rtc.handleAnswer(msg.answer);
           }
@@ -139,19 +142,15 @@ export function App() {
 
         case 'PEER_DISCONNECTED':
           setPeerJoined(false);
+          // If WebRTC DataChannel is not open, revert to connecting/searching state gracefully
           if (!rtcManagerRef.current?.isDataChannelOpen()) {
-            setConnectionState('disconnected');
-            setReceivedFile((currentFile) => {
-              if (!currentFile) {
-                setErrorMsg('Peer disconnected from signaling channel');
-              }
-              return currentFile;
-            });
+            setConnectionState('connecting');
           }
           break;
 
         case 'ERROR':
           setErrorMsg(msg.message);
+          setIsGeneratingRoom(false);
           break;
       }
     });
@@ -159,8 +158,6 @@ export function App() {
     signalingRef.current = client;
     return client;
   };
-
-  const [isGeneratingRoom, setIsGeneratingRoom] = useState(false);
 
   const handleCreateRoom = async () => {
     try {
@@ -171,8 +168,8 @@ export function App() {
       sig.createRoom();
     } catch (err) {
       console.error('Failed to create room:', err);
-      setErrorMsg('Failed to connect to signaling server');
       setIsGeneratingRoom(false);
+      setErrorMsg('Signaling server connecting... Please try again in a moment.');
     }
   };
 
@@ -182,7 +179,6 @@ export function App() {
       await rtcManagerRef.current.sendFile(selectedFile);
     } catch (err: any) {
       console.error('Send error:', err);
-      hasAutoStartedRef.current = false;
       setErrorMsg(err.message || 'File send failed');
     }
   };
@@ -202,18 +198,13 @@ export function App() {
 
   const initReceiverFlow = async (roomCode: string) => {
     try {
+      setErrorMsg(null);
       updateRole('receiver');
       const sig = await getSignalingClient();
       sig.joinRoom(roomCode);
     } catch (err) {
       console.error('Failed to join room:', err);
-      setErrorMsg('Failed to connect to signaling server at ws://localhost:8080');
-    }
-  };
-
-  const handleCancelTransfer = () => {
-    if (rtcManagerRef.current) {
-      rtcManagerRef.current.cancelTransfer(true);
+      setErrorMsg('Signaling server connecting... Please try again in a moment.');
     }
   };
 
@@ -237,6 +228,7 @@ export function App() {
     setReceivedFile(null);
     setDiagnostics(null);
     setErrorMsg(null);
+    setIsGeneratingRoom(false);
     window.location.hash = '';
   };
 
@@ -315,13 +307,12 @@ export function App() {
               }}
               roomId={roomId}
               onCreateRoom={handleCreateRoom}
-              isGeneratingRoom={isGeneratingRoom}
               peerJoined={peerJoined}
               connectionState={connectionState}
               progress={role === 'sender' ? progress : null}
               onStartSend={handleStartSend}
-              onCancelTransfer={handleCancelTransfer}
               onReset={handleReset}
+              isGeneratingRoom={isGeneratingRoom}
             />
           </div>
 
@@ -334,7 +325,6 @@ export function App() {
               progress={role === 'receiver' ? progress : null}
               receivedFile={receivedFile}
               error={errorMsg}
-              onCancelTransfer={handleCancelTransfer}
             />
           </div>
         </div>
