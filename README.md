@@ -2,12 +2,18 @@
 
 Zero-server browser-to-browser file sharing powered by native WebRTC DataChannels and custom WebSocket signaling.
 
+[![Live App](https://img.shields.io/badge/Live%20App-p2--p--drop.vercel.app-E8A33D?style=for-the-badge&logo=vercel&logoColor=white)](https://p2-p-drop.vercel.app/)
+[![Showcase Site](https://img.shields.io/badge/Showcase%20Site-p2--p--drop--landing.vercel.app-4FD1C5?style=for-the-badge&logo=vercel&logoColor=white)](https://p2-p-drop-landing.vercel.app/)
+
 ![WebRTC](https://img.shields.io/badge/WebRTC-Native%20DataChannel-E8A33D)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6)
 ![React](https://img.shields.io/badge/React-19.0-61DAFB)
 ![Vite](https://img.shields.io/badge/Vite-8.2-646CFF)
 ![Node.js](https://img.shields.io/badge/Node.js-WebSocket-4FD1C5)
 ![License](https://img.shields.io/badge/License-MIT-green)
+
+> 🌐 **Live Web Application**: [https://p2-p-drop.vercel.app/](https://p2-p-drop.vercel.app/)  
+> ⚡ **Technical Showcase & Architecture Site**: [https://p2-p-drop-landing.vercel.app/](https://p2-p-drop-landing.vercel.app/)
 
 ---
 
