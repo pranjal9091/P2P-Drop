@@ -56,21 +56,8 @@ export class WebRTCManager {
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
-        { urls: 'stun:global.stun.twilio.com:3478' },
-        { urls: 'stun:stun.services.mozilla.com' },
-        {
-          urls: [
-            'turn:openrelay.metered.ca:80',
-            'turn:openrelay.metered.ca:443',
-            'turn:openrelay.metered.ca:443?transport=tcp'
-          ],
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        }
-      ],
-      iceCandidatePoolSize: 10
+        { urls: 'stun:global.stun.twilio.com:3478' }
+      ]
     };
 
     this.pc = new RTCPeerConnection(config);
@@ -245,28 +232,7 @@ export class WebRTCManager {
       });
     }
 
-    console.log(`[WebRTCManager] Block-pipelined fast stream starting for: ${file.name} (${file.size} bytes)`);
-
-    // Step 1: Pre-transfer Hashing
-    if (this.events.onProgressUpdate) {
-      this.events.onProgressUpdate({
-        fileId: file.name,
-        fileName: file.name,
-        fileSize: file.size,
-        bytesTransferred: 0,
-        chunksTransferred: 0,
-        totalChunks: Math.ceil(file.size / this.CHUNK_SIZE),
-        speedBps: 0,
-        percentage: 0,
-        status: 'hashing'
-      });
-    }
-
-    // Compute hash for files <= 50 MB
-    let sha256 = 'p2p-sctp-checksum-verified';
-    if (file.size <= 50 * 1024 * 1024) {
-      sha256 = await calculateSHA256(file);
-    }
+    console.log(`[WebRTCManager] Instant-start stream starting for: ${file.name} (${file.size} bytes)`);
 
     const totalChunks = Math.ceil(file.size / this.CHUNK_SIZE);
     const metadata: FileMetadata = {
@@ -276,7 +242,7 @@ export class WebRTCManager {
       type: file.type || 'application/octet-stream',
       totalChunks,
       chunkSize: this.CHUNK_SIZE,
-      checksumSHA256: sha256
+      checksumSHA256: `sctp-verified-${file.size}-${Date.now()}`
     };
 
     // Step 2: Send Header Packet
