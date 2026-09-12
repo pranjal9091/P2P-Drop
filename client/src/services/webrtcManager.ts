@@ -42,17 +42,39 @@ export class WebRTCManager {
   }
 
   public initializePeerConnection(onIceCandidate: (candidate: RTCIceCandidateInit) => void): RTCPeerConnection {
+    if (this.pc) {
+      try {
+        this.pc.close();
+      } catch (err) {
+        console.warn('[WebRTCManager] Error closing old RTCPeerConnection:', err);
+      }
+      this.pc = null;
+    }
+
     const config: RTCConfiguration = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-      ]
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        { urls: 'stun:global.stun.twilio.com:3478' },
+        { urls: 'stun:stun.services.mozilla.com' },
+        {
+          urls: [
+            'turn:openrelay.metered.ca:80',
+            'turn:openrelay.metered.ca:443',
+            'turn:openrelay.metered.ca:443?transport=tcp'
+          ],
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ],
+      iceCandidatePoolSize: 10
     };
 
     this.pc = new RTCPeerConnection(config);
     this.remoteDescriptionSet = false;
-    this.pendingIceCandidates = [];
 
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -61,8 +83,23 @@ export class WebRTCManager {
     };
 
     this.pc.oniceconnectionstatechange = () => {
-      if (this.pc && this.events.onConnectionStateChange) {
-        this.events.onConnectionStateChange(this.pc.iceConnectionState);
+      if (!this.pc) return;
+      const state = this.pc.iceConnectionState;
+      console.log('[WebRTCManager] ICE Connection State:', state);
+
+      if (state === 'failed') {
+        console.warn('[WebRTCManager] ICE Connection failed. Triggering ICE restart...');
+        try {
+          if (this.pc.restartIce) {
+            this.pc.restartIce();
+          }
+        } catch (err) {
+          console.error('[WebRTCManager] Failed to restart ICE:', err);
+        }
+      }
+
+      if (this.events.onConnectionStateChange) {
+        this.events.onConnectionStateChange(state);
       }
     };
 
@@ -72,6 +109,11 @@ export class WebRTCManager {
     };
 
     this.startDiagnosticsPolling();
+
+    // Flush any early candidates that arrived prior to pc initialization
+    if (this.remoteDescriptionSet) {
+      this.flushPendingIceCandidates();
+    }
 
     return this.pc;
   }
@@ -152,10 +194,10 @@ export class WebRTCManager {
   }
 
   public async addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
-    if (!this.pc) return;
+    if (!candidate) return;
 
-    if (!this.remoteDescriptionSet) {
-      console.log('[WebRTCManager] Queueing ICE candidate prior to remote description');
+    if (!this.pc || !this.remoteDescriptionSet) {
+      console.log('[WebRTCManager] Queueing ICE candidate prior to remote description / pc init');
       this.pendingIceCandidates.push(candidate);
       return;
     }

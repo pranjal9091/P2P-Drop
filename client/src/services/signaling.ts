@@ -7,6 +7,8 @@ export class SignalingClient {
   private url: string;
   private listeners: Set<SignalingCallback> = new Set();
   private pingInterval: number | null = null;
+  private shouldReconnect = true;
+  private currentRoomId: string | null = null;
 
   constructor(url?: string) {
     if (url) {
@@ -31,6 +33,7 @@ export class SignalingClient {
   }
 
   public async connect(retries = 3, delayMs = 1500): Promise<void> {
+    this.shouldReconnect = true;
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         await this.attemptConnect();
@@ -52,6 +55,10 @@ export class SignalingClient {
         this.ws.onopen = () => {
           console.log('[SignalingClient] Connected to signaling server at', this.url);
           this.startHeartbeat();
+          // If we had an active room before disconnect, auto-rejoin
+          if (this.currentRoomId) {
+            this.joinRoom(this.currentRoomId);
+          }
           resolve();
         };
 
@@ -72,6 +79,15 @@ export class SignalingClient {
         this.ws.onclose = () => {
           console.log('[SignalingClient] WebSocket connection closed');
           this.stopHeartbeat();
+
+          if (this.shouldReconnect) {
+            setTimeout(() => {
+              if (this.shouldReconnect) {
+                console.log('[SignalingClient] Attempting auto-reconnect...');
+                this.connect(3, 1000).catch((e) => console.warn('[SignalingClient] Auto-reconnect failed:', e));
+              }
+            }, 2000);
+          }
         };
       } catch (err) {
         reject(err);
@@ -101,6 +117,7 @@ export class SignalingClient {
   }
 
   public joinRoom(roomId: string) {
+    this.currentRoomId = roomId;
     this.send({ type: 'JOIN_ROOM', roomId });
   }
 
@@ -119,7 +136,7 @@ export class SignalingClient {
   private startHeartbeat() {
     this.pingInterval = window.setInterval(() => {
       this.send({ type: 'PING' });
-    }, 15000); // 15s ping interval to prevent cloud WebSocket timeouts
+    }, 12000); // 12s ping interval to prevent cloud proxy timeouts
   }
 
   private stopHeartbeat() {
@@ -130,6 +147,8 @@ export class SignalingClient {
   }
 
   public disconnect() {
+    this.shouldReconnect = false;
+    this.currentRoomId = null;
     this.stopHeartbeat();
     if (this.ws) {
       this.ws.close();
